@@ -32,7 +32,7 @@ work as before.
 To go back to the stock menu:
 
 ```bash
-omarchy plugin disable john-copenhaver.radial-menu
+omarchy plugin disable jlc.radial-menu
 ```
 
 ## Keys
