@@ -21,7 +21,7 @@ instead of in a list, and the two menus too big for one ring, **Apps** and
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/<you>/omarchy-radial-menu.git --enable
+omarchy plugin add https://github.com/JohnnyCopenhaver/omarchy-radial-menu.git --enable
 ```
 
 The plugin replaces the built-in `omarchy.menu`. `Super+Space`, the Omarchy
