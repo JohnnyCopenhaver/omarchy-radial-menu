@@ -167,14 +167,25 @@ Item {
     onLoadFailed: root.usage = ({})
   }
 
-  // Pinned apps and the last item used per ring: { pins: [appId], last: { key: { v, t } } }.
-  property var menuState: ({ pins: [], last: {} })
+  // Pinned apps, the last item used per ring, and the user's own app groups:
+  // { pins: [appId], last: { key: { v, t } }, groups: [{ id, label }], assign: { appId: groupId } }.
+  property var menuState: root.emptyState()
   // A remembered position older than this is stale: open fresh instead.
   readonly property int rememberMs: 12 * 3600 * 1000
+
+  function emptyState() { return { pins: [], last: {}, groups: [], assign: {} } }
 
   function saveState(next) {
     root.menuState = next
     stateFile.setText(JSON.stringify(next))
+  }
+
+  // Save with some fields replaced, keeping the rest.
+  function patchState(fields) {
+    var next = ({})
+    for (var k in root.menuState) next[k] = root.menuState[k]
+    for (var f in fields) next[f] = fields[f]
+    root.saveState(next)
   }
 
   function isPinned(appId) {
@@ -187,14 +198,40 @@ Item {
     var at = pins.indexOf(appId)
     if (at >= 0) pins.splice(at, 1)
     else pins.push(appId)
-    root.saveState({ pins: pins, last: root.menuState.last })
+    root.patchState({ pins: pins })
   }
 
   function remember(key, value) {
     var last = ({})
     for (var k in root.menuState.last) last[k] = root.menuState.last[k]
     last[key] = { v: value, t: Date.now() }
-    root.saveState({ pins: root.menuState.pins, last: last })
+    root.patchState({ last: last })
+  }
+
+  // Put an app in a group; an empty groupId sends it back to its usual one.
+  function assignApp(appId, groupId) {
+    if (!appId) return
+    var assign = ({})
+    for (var k in root.menuState.assign) if (k !== appId) assign[k] = root.menuState.assign[k]
+    if (groupId) assign[appId] = groupId
+    root.patchState({ assign: assign })
+  }
+
+  function createGroup(label) {
+    var id = "u." + Date.now().toString(36)
+    root.patchState({ groups: root.menuState.groups.concat([{ id: id, label: label }]) })
+    return id
+  }
+
+  function renameGroup(id, label) {
+    root.patchState({ groups: root.menuState.groups.map(function(g) { return g.id === id ? { id: g.id, label: label } : g }) })
+  }
+
+  // Its apps fall back to their usual groups.
+  function deleteGroup(id) {
+    var assign = ({})
+    for (var k in root.menuState.assign) if (root.menuState.assign[k] !== id) assign[k] = root.menuState.assign[k]
+    root.patchState({ groups: root.menuState.groups.filter(function(g) { return g.id !== id }), assign: assign })
   }
 
   function recall(key) {
@@ -218,10 +255,15 @@ Item {
     onLoaded: {
       try {
         var s = JSON.parse(text())
-        root.menuState = { pins: Array.isArray(s.pins) ? s.pins : [], last: s.last || {} }
-      } catch (e) { root.menuState = { pins: [], last: {} } }
+        root.menuState = {
+          pins: Array.isArray(s.pins) ? s.pins : [],
+          last: s.last || {},
+          groups: Array.isArray(s.groups) ? s.groups : [],
+          assign: s.assign || {}
+        }
+      } catch (e) { root.menuState = root.emptyState() }
     }
-    onLoadFailed: root.menuState = { pins: [], last: {} }
+    onLoadFailed: root.menuState = root.emptyState()
   }
 
   function loadPalette(raw) {

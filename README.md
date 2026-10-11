@@ -12,7 +12,9 @@ instead of in a list, and the two menus too big for one ring, **Apps** and
 - Every Omarchy menu and submenu is shown as a ring. Small menus show all their items at once.
 - **Apps** groups your installed apps by freedesktop category and puts web apps in their own group.
 - **Install** uses the same rings: Style, Development, Editor, AI, Gaming and the rest, plus a Packages group.
-- **Favourites**: pin any app with `Ctrl+P` or a right-click. Pins come first in Apps and get a ★.
+- **Favourites**: pin any app with `Ctrl+P` or from its right-click options. Pins come first in Apps and get a ★.
+- **Your own groups**: move any app to another group, or make your own groups ("Work", "Streaming"…).
+  Moved apps stay put; deleting one of your groups sends its apps back to their usual groups.
 - **Shortcuts**: up to three pinned or recent apps sit on the main ring next to Apps.
 - **Remembers your place**: each menu reopens on the item you last used (for 12 hours).
 - **Type to search**: typing switches to the normal searchable list.
@@ -45,7 +47,11 @@ omarchy plugin disable jlc.radial-menu
 | `Home` / `End` | First / last item |
 | `PgUp` / `PgDn` / dots in the hub | Change page on long rings |
 | `Backspace` / right-click the disc / click the hub | Go back |
-| `Ctrl+P` / right-click an app | Pin or unpin a favourite |
+| `Ctrl+P` | Pin or unpin a favourite |
+| Right-click / `Menu` key / `Shift+F10` | Options: pin, move, uninstall; rename or delete your groups |
+| `Ctrl+X`, then `Enter` / `Ctrl+V` | Move an app: pick it up, choose a group (or **New group**), drop it |
+| `Ctrl+N` / `F2` | New group / rename the focused group |
+| `Delete` twice on your group | Delete the group (its apps go back where they were) |
 | `Delete` on an app | Uninstall it (asks first) |
 | Type anything | Search |
 | `Esc` | Close |
@@ -56,8 +62,8 @@ omarchy plugin disable jlc.radial-menu
   `MenuModel.js` and most of `Menu.qml` come from upstream; the ring UI is
   `RadialMenu.qml`. A large Omarchy update to the built-in menu may need a
   matching update here.
-- State is kept in `~/.local/state/omarchy/radial-menu-state.json` (pins and
-  last position) and `radial-menu-usage.json` (recent apps).
+- State is kept in `~/.local/state/omarchy/radial-menu-state.json` (pins, last
+  position, your groups and moved apps) and `radial-menu-usage.json` (recent apps).
 - After editing the QML, run `omarchy restart shell`.
 
 ## License

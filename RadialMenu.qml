@@ -48,6 +48,36 @@ Item {
   property real catReveal: 0
   property real appReveal: 0
 
+  // Rearranging the Apps groups. Only one of these is ever active:
+  //  carry       — an app picked up (Ctrl+X / "Move to…"), waiting for a group
+  //  naming      — typing a name for a new or renamed group
+  //  actionTarget — the right-click / Menu-key options ring is out
+  property var carry: null          // { row, fromCat }
+  property var naming: null         // { mode: "new" | "rename", groupId, text }
+  property var actionTarget: null   // { kind: "app", row } | { kind: "group", group }
+  property int actionIndex: 0
+  property string armedDelete: ""   // group id waiting for a second Delete
+  readonly property bool modal: radial.naming !== null || radial.actionTarget !== null
+
+  // The line under the disc: what's going on, or what the focused item is.
+  readonly property string statusText: {
+    if (radial.naming)
+      return (radial.naming.mode === "rename" ? "Rename group: “" : "New group: “") + radial.naming.text + "▌”"
+    if (radial.actionTarget)
+      return "Options for " + (radial.actionTarget.kind === "app" ? radial.actionTarget.row.label : radial.actionTarget.group.label)
+    if (radial.carry) {
+      var g = radial.groups[radial.catIndex]
+      return "Move " + radial.carry.row.label + " to " + (g ? (g.newSlot ? "a new group" : g.label) : "…")
+    }
+    if (radial.armedDelete) {
+      var d = radial.groups[radial.groupPos(radial.armedDelete)]
+      return "Press Delete again to remove “" + (d ? d.label : "") + "” — its apps go back to their usual groups"
+    }
+    var f = radial.focusItem
+    if (!f) return ""
+    return String(f.detail || (radial.appFocus ? "" : f.apps.length + (f.apps.length === 1 ? " item" : " items")))
+  }
+
   readonly property var allCatApps: {
     for (var i = 0; i < radial.groups.length; i++)
       if (radial.groups[i].id === radial.catId) return radial.groups[i].apps
@@ -70,6 +100,7 @@ Item {
   readonly property bool appFocus: radial.appsOpen && radial.catId !== "" && radial.focusLevel === 2
   readonly property var focusItem: {
     if (!radial.appsOpen) return null
+    if (radial.actionTarget) return radial.actions[radial.actionIndex] || null
     if (radial.appFocus) return radial.allCatApps[radial.appIndex] || null
     return radial.groups[radial.catIndex] || null
   }
@@ -179,6 +210,11 @@ Item {
     var byApp = ({})
     var out = []
     var rows = radial.menu && radial.menu.appLibrary ? radial.menu.appLibrary.sortedEntries("") : []
+    var custom = radial.menu.menuState.groups || []
+    var assign = radial.menu.menuState.assign || {}
+    var customById = ({})
+    for (var u = 0; u < custom.length; u++)
+      customById[custom[u].id] = { id: custom[u].id, label: custom[u].label, icon: radial.initialOf(custom[u].label), custom: true }
 
     for (var j = 0; j < rows.length; j++) {
       var entry = rows[j].entry
@@ -194,10 +230,14 @@ Item {
           if (cats.indexOf(defs[d].keys[k]) >= 0) { def = defs[d]; break }
       // Category-less launchers from Omarchy's web-app installer.
       if (!def && /webapp/.test(String(entry.execString || ""))) def = radial.webDef
-      if (!def) def = { id: "other", label: "Other", icon: "󰇘" }
+      if (!def) def = radial.otherDef
+      var auto = def
+      // The user's own choice beats the rules; a deleted group is ignored.
+      var want = assign[appId]
+      if (want) def = customById[want] || radial.builtinDef(want) || auto
 
       if (!byId[def.id]) {
-        byId[def.id] = { id: def.id, label: def.label, icon: def.icon, apps: [] }
+        byId[def.id] = { id: def.id, label: def.label, icon: def.icon, custom: !!def.custom, apps: [] }
         out.push(byId[def.id])
       }
       var row = {
@@ -208,7 +248,10 @@ Item {
         iconFont: "",
         label: String(radial.menu.appLibrary.entryName(entry) || appId),
         appIcon: String(entry.icon || ""),
-        detail: String(radial.menu.appLibrary.entrySubtext(entry) || "")
+        detail: String(radial.menu.appLibrary.entrySubtext(entry) || ""),
+        groupId: def.id,
+        autoCat: auto.id,
+        autoLabel: auto.label
       }
       byId[def.id].apps.push(row)
       byApp[appId] = row
@@ -221,8 +264,16 @@ Item {
       out.push(byId.web)
     }
 
-    // Stable category order (the defs' order, "Other" last); apps alphabetical.
-    var order = ["games", "dev", "graphics", "media", "internet", "web", "office", "system", "utility", "other"]
+    // User groups show even while empty, so a new one can be filled.
+    for (var c2 = 0; c2 < custom.length; c2++) {
+      var cg = customById[custom[c2].id]
+      if (!byId[cg.id]) { byId[cg.id] = { id: cg.id, label: cg.label, icon: cg.icon, custom: true, apps: [] }; out.push(byId[cg.id]) }
+    }
+
+    // Stable category order: user groups first as created, then the defs'
+    // order with "Other" last; apps alphabetical.
+    var order = custom.map(function(g) { return g.id })
+      .concat(["games", "dev", "graphics", "media", "internet", "web", "office", "system", "utility", "other"])
     out.sort(function(a, b) { return order.indexOf(a.id) - order.indexOf(b.id) })
     for (var g = 0; g < out.length; g++)
       out[g].apps.sort(function(a, b) { return a.label.toLowerCase() < b.label.toLowerCase() ? -1 : (a.label.toLowerCase() > b.label.toLowerCase() ? 1 : 0) })
@@ -258,6 +309,19 @@ Item {
   }
 
   readonly property var webDef: ({ id: "web", label: "Web Apps", icon: "󰌹" })
+  readonly property var otherDef: ({ id: "other", label: "Other", icon: "󰇘" })
+
+  // A built-in group by id, for apps moved into one.
+  function builtinDef(id) {
+    for (var i = 0; i < radial.categoryDefs.length; i++)
+      if (radial.categoryDefs[i].id === id) return radial.categoryDefs[i]
+    if (id === "web") return radial.webDef
+    if (id === "other") return radial.otherDef
+    return null
+  }
+
+  // A user group's button shows its initial.
+  function initialOf(label) { return String(label || "?").trim().charAt(0).toUpperCase() || "?" }
 
   function openApps(id) {
     radial.ringId = id || "apps"
@@ -280,6 +344,10 @@ Item {
   }
 
   function closeApps() {
+    radial.carry = null
+    radial.naming = null
+    radial.actionTarget = null
+    radial.armedDelete = ""
     radial.appsOpen = false
     radial.catId = ""
     radial.query = ""
@@ -290,7 +358,13 @@ Item {
 
   // Step back one level: search → apps → categories → root.
   function back() {
-    if (radial.searching) {
+    if (radial.naming) {
+      radial.naming = null
+    } else if (radial.actionTarget) {
+      radial.closeActions()
+    } else if (radial.carry) {
+      radial.cancelCarry()
+    } else if (radial.searching) {
       radial.setQuery("")
     } else if (radial.catId !== "") {
       radial.catId = ""
@@ -369,6 +443,205 @@ Item {
     if (!radial.appFocus) return null
     var it = radial.allCatApps[radial.appIndex]
     return it && it.kind === "app" ? it : null
+  }
+
+  // ------------------------------------------------ rearranging groups
+
+  // Rebuild the rings. While an app is carried, Favourites and Recent
+  // aren't places it can go, and a "New group" slot is added.
+  function refreshGroups() {
+    var built = radial.buildGroups()
+    if (radial.carry) {
+      built = built.filter(function(g) { return g.id !== "fav" && g.id !== "recent" })
+      built.push({ id: "__new", label: "New group", icon: "\uf067", newSlot: true, apps: [] })
+    }
+    radial.groups = built
+  }
+
+  function groupPos(id) {
+    for (var i = 0; i < radial.groups.length; i++) if (radial.groups[i].id === id) return i
+    return -1
+  }
+
+  function focusItemId(itemId) {
+    var apps = radial.allCatApps
+    for (var a = 0; a < apps.length; a++) if (apps[a].itemId === itemId) { radial.setApp(a); return }
+  }
+
+  // Open a group with one app focused, e.g. where a moved app landed.
+  function showApp(groupId, itemId) {
+    var p = radial.groupPos(groupId)
+    if (p < 0) { radial.catId = ""; radial.focusLevel = 1; return }
+    radial.openCategory(p)
+    radial.focusItemId(itemId)
+  }
+
+  function startCarry() {
+    if (radial.ringId !== "apps") return
+    var it = radial.hotApp()
+    if (!it) return
+    radial.carry = { row: it, fromCat: radial.catId }
+    radial.query = ""
+    radial.catId = ""
+    radial.appReveal = 0
+    radial.focusLevel = 1
+    radial.refreshGroups()
+    radial.catIndex = Math.max(0, radial.groupPos(it.groupId))
+  }
+
+  function cancelCarry() {
+    var c = radial.carry
+    radial.carry = null
+    radial.refreshGroups()
+    if (c) radial.showApp(c.fromCat, c.row.itemId)
+  }
+
+  // Drop the carried app on group i (or name a new group for it).
+  function dropOn(i) {
+    var g = radial.groups[i]
+    if (!g || !radial.carry) return
+    if (g.newSlot) { radial.naming = { mode: "new", groupId: "", text: "" }; return }
+    var row = radial.carry.row
+    radial.menu.assignApp(row.appId, g.id === row.autoCat ? "" : g.id)
+    radial.carry = null
+    radial.refreshGroups()
+    radial.showApp(g.id, row.itemId)
+  }
+
+  function commitName() {
+    var n = radial.naming
+    var t = n ? n.text.trim() : ""
+    if (!t) return
+    radial.naming = null
+    if (n.mode === "rename") {
+      radial.menu.renameGroup(n.groupId, t)
+      radial.refreshGroups()
+      return
+    }
+    var id = radial.menu.createGroup(t)
+    if (radial.carry) {
+      var row = radial.carry.row
+      radial.menu.assignApp(row.appId, id)
+      radial.carry = null
+      radial.refreshGroups()
+      radial.showApp(id, row.itemId)
+    } else {
+      radial.refreshGroups()
+      radial.catId = ""
+      radial.appReveal = 0
+      radial.focusLevel = 1
+      radial.catIndex = Math.max(0, radial.groupPos(id))
+    }
+  }
+
+  function deleteGroup(id) {
+    radial.menu.deleteGroup(id)
+    if (radial.catId === id) { radial.catId = ""; radial.appReveal = 0; radial.focusLevel = 1 }
+    radial.refreshGroups()
+    radial.catIndex = Math.min(radial.catIndex, radial.groups.length - 1)
+  }
+
+  // What the options ring offers for its target.
+  readonly property var actions: {
+    var t = radial.actionTarget
+    if (!t) return []
+    if (t.kind === "app") {
+      var a = [
+        { id: "pin", label: radial.menu.isPinned(t.row.appId) ? "Unpin" : "Pin to Favourites", icon: "\uf005" },
+        { id: "move", label: "Move to…", icon: "\uf047" }
+      ]
+      if (t.row.groupId !== t.row.autoCat) a.push({ id: "reset", label: "Back to " + t.row.autoLabel, icon: "\uf0e2" })
+      a.push({ id: "uninstall", label: "Uninstall", icon: "\uf1f8" })
+      return a
+    }
+    var g = [{ id: "new", label: "New group", icon: "\uf067" }]
+    if (t.group.custom) g.unshift({ id: "rename", label: "Rename", icon: "\uf040" }, { id: "delete", label: "Delete group", icon: "\uf1f8" })
+    return g
+  }
+
+  // Options for whatever has focus (Menu key / Shift+F10).
+  function openActionsForFocus() {
+    if (radial.ringId !== "apps") return
+    if (radial.appFocus) {
+      var it = radial.hotApp()
+      if (it) radial.openActions({ kind: "app", row: it })
+    } else {
+      var g = radial.groups[radial.catIndex]
+      if (g && g.id !== "fav" && g.id !== "recent") radial.openActions({ kind: "group", group: g })
+    }
+  }
+
+  function openActions(target) {
+    radial.actionIndex = 0
+    radial.actionTarget = target
+  }
+
+  function closeActions() { radial.actionTarget = null }
+
+  function runAction(i) {
+    var a = radial.actions[i]
+    var t = radial.actionTarget
+    if (!a) return
+    radial.closeActions()
+    if (a.id === "pin") radial.togglePinHot()
+    else if (a.id === "move") radial.startCarry()
+    else if (a.id === "uninstall") radial.menu.requestDeleteSelected()
+    else if (a.id === "reset") {
+      radial.menu.assignApp(t.row.appId, "")
+      radial.refreshGroups()
+      radial.showApp(t.row.autoCat, t.row.itemId)
+    }
+    else if (a.id === "rename") radial.naming = { mode: "rename", groupId: t.group.id, text: t.group.label }
+    else if (a.id === "delete") radial.deleteGroup(t.group.id)
+    else if (a.id === "new") radial.naming = { mode: "new", groupId: "", text: "" }
+  }
+
+  function printable(event) {
+    return event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
+      && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)
+  }
+
+  // Keys while a group name is being typed: everything goes to the name.
+  function nameKey(event) {
+    var k = event.key
+    var n = radial.naming
+    if (k === Qt.Key_Escape) radial.naming = null
+    else if (k === Qt.Key_Return || k === Qt.Key_Enter) radial.commitName()
+    else if (Util.editsFilter(event, n.text)) radial.naming = { mode: n.mode, groupId: n.groupId, text: Util.editedFilter(event, n.text) }
+    else if (radial.printable(event) && n.text.length < 24) radial.naming = { mode: n.mode, groupId: n.groupId, text: n.text + event.text }
+    return true
+  }
+
+  function actionKey(event) {
+    var k = event.key
+    var n = radial.actions.length
+    if (k === Qt.Key_Escape || k === Qt.Key_Backspace || k === Qt.Key_Menu) radial.closeActions()
+    else if (k === Qt.Key_Right || k === Qt.Key_Down || k === Qt.Key_Tab) radial.actionIndex = (radial.actionIndex + 1) % n
+    else if (k === Qt.Key_Left || k === Qt.Key_Up || k === Qt.Key_Backtab) radial.actionIndex = (radial.actionIndex - 1 + n) % n
+    else if (k === Qt.Key_Return || k === Qt.Key_Enter) radial.runAction(radial.actionIndex)
+    else if (k >= Qt.Key_1 && k <= Qt.Key_9 && k - Qt.Key_1 < n) radial.runAction(k - Qt.Key_1)
+    return true
+  }
+
+  function carryKey(event) {
+    var k = event.key
+    var ctrl = event.modifiers & Qt.ControlModifier
+    if (k === Qt.Key_Escape || k === Qt.Key_Backspace) radial.cancelCarry()
+    else if (k === Qt.Key_Return || k === Qt.Key_Enter || (ctrl && k === Qt.Key_V)) radial.dropOn(radial.catIndex)
+    else if (k === Qt.Key_Right || k === Qt.Key_Down || k === Qt.Key_Tab) radial.step(1)
+    else if (k === Qt.Key_Left || k === Qt.Key_Up || k === Qt.Key_Backtab) radial.step(-1)
+    else if (k === Qt.Key_Home || k === Qt.Key_End) radial.jump(k === Qt.Key_End)
+    else if (k >= Qt.Key_1 && k <= Qt.Key_9) radial.dropOn(k - Qt.Key_1)
+    else if (k === Qt.Key_0) radial.dropOn(9)
+    return true
+  }
+
+  // Mouse on the rings while the options ring or a name is up: a click
+  // elsewhere just closes the options; nothing else reacts.
+  function pointerBlocked() {
+    if (radial.naming) return true
+    if (radial.actionTarget) { radial.closeActions(); return true }
+    return false
   }
 
   // -1 when the item doesn't fit the search; higher is a better match.
@@ -461,7 +734,29 @@ Item {
   // Keys for the outer rings. Returns true when the key was consumed.
   function handleKey(event) {
     if (!radial.appsOpen) return false
+    if (radial.naming) return radial.nameKey(event)
+    if (radial.actionTarget) return radial.actionKey(event)
+    if (radial.carry) return radial.carryKey(event)
     var k = event.key
+    var ctrl = event.modifiers & Qt.ControlModifier
+    var armed = radial.armedDelete
+    radial.armedDelete = ""
+    if (k === Qt.Key_Menu || (k === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) { radial.openActionsForFocus(); return true }
+    if (ctrl && k === Qt.Key_X) { radial.startCarry(); return true }
+    if (ctrl && k === Qt.Key_N && radial.ringId === "apps") { radial.naming = { mode: "new", groupId: "", text: "" }; return true }
+    if (!radial.appFocus) {
+      var fg = radial.groups[radial.catIndex]
+      if (k === Qt.Key_F2 && fg && fg.custom) { radial.naming = { mode: "rename", groupId: fg.id, text: fg.label }; return true }
+      // Delete on a user group removes it (press twice); on any other group
+      // it does nothing — it must never reach an app hidden behind the rings.
+      if (k === Qt.Key_Delete) {
+        if (fg && fg.custom) {
+          if (armed === fg.id) radial.deleteGroup(fg.id)
+          else radial.armedDelete = fg.id
+        }
+        return true
+      }
+    }
     if (k === Qt.Key_Escape) { radial.back(); return true }
     if (k === Qt.Key_Backspace && !radial.query) { radial.back(); return true }
     if (k === Qt.Key_Right || k === Qt.Key_Down || k === Qt.Key_Tab) { radial.step(1); return true }
@@ -479,8 +774,7 @@ Item {
     if (!radial.query && plain && k >= Qt.Key_1 && k <= Qt.Key_9) { radial.hintPick(k - Qt.Key_1); return true }
     if (!radial.query && plain && k === Qt.Key_0) { radial.hintPick(9); return true }
     if (Util.editsFilter(event, radial.query)) { radial.setQuery(Util.editedFilter(event, radial.query)); return true }
-    if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
-        && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
+    if (radial.printable(event)) {
       radial.setQuery(radial.query + event.text)
       return true
     }
@@ -602,7 +896,8 @@ Item {
     property bool dim: false
     property string hint: ""
     property bool pinned: false
-    property bool pinnable: false
+    property bool hasMenu: false
+    property bool noLabel: false
     property color accentStart: radial.menu ? radial.menu.ringStart : "white"
     property color accentEnd: radial.menu ? radial.menu.ringEnd : "white"
     signal entered()
@@ -713,7 +1008,7 @@ Item {
       anchors.top: parent.bottom
       anchors.topMargin: Style.space(6)
       anchors.horizontalCenter: parent.horizontalCenter
-      visible: btn.showLabel || btn.hot
+      visible: !btn.noLabel && (btn.showLabel || btn.hot)
       // The focused label shows in full; the rest stay inside their slot.
       width: btn.hot ? Math.max(radial.buttonSize * 1.9, implicitWidth) : radial.buttonSize * 1.9
       horizontalAlignment: Text.AlignHCenter
@@ -733,7 +1028,7 @@ Item {
       cursorShape: Qt.PointingHandCursor
       // Only a moving pointer takes focus: a ring that opens or filters
       // under a resting pointer must not steal it from the keyboard.
-      acceptedButtons: btn.pinnable ? (Qt.LeftButton | Qt.RightButton) : Qt.LeftButton
+      acceptedButtons: btn.hasMenu ? (Qt.LeftButton | Qt.RightButton) : Qt.LeftButton
       onPositionChanged: btn.entered()
       onClicked: function(mouse) {
         if (mouse.button === Qt.RightButton) btn.rightClicked()
@@ -884,8 +1179,21 @@ Item {
         // Above the hub's click area so the page dots get their clicks.
         z: 1
 
+        // The app being moved rides in the hub.
+        Image {
+          anchors.horizontalCenter: parent.horizontalCenter
+          visible: radial.carry !== null
+          width: radial.hubRadius * 0.8
+          height: width
+          fillMode: Image.PreserveAspectFit
+          sourceSize.width: width * Screen.devicePixelRatio
+          sourceSize.height: height * Screen.devicePixelRatio
+          source: radial.carry && radial.menu && radial.menu.appLibrary ? radial.menu.appLibrary.iconSource(radial.carry.row.appIcon) : ""
+        }
+
         GradientGlyph {
           anchors.horizontalCenter: parent.horizontalCenter
+          visible: radial.carry === null
           width: radial.hubRadius * 1.1
           height: radial.hubRoot ? radial.hubRadius * 1.1 : radial.hubRadius * 0.8
           // The Omarchy logo on the root ring; the submenu's own icon inside it.
@@ -941,7 +1249,8 @@ Item {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: {
-          if (radial.appsOpen) radial.closeApps()
+          if (radial.modal || radial.carry) radial.back()
+          else if (radial.appsOpen) radial.closeApps()
           else if (radial.atRoot) radial.menu.cancel()
           else radial.menu.goBack()
         }
@@ -1076,17 +1385,31 @@ Item {
         readonly property int matches: radial.searching ? radial.groupMatches(cat.modelData) : cat.modelData.apps.length
         opacity: radial.catReveal * (radial.searching && cat.matches === 0 ? 0.25 : 1)
           * (radial.appFocus && cat.modelData.id !== radial.catId ? 0.45 : 1)
+          * (radial.actionTarget ? 0.3 : 1)
         Behavior on opacity { NumberAnimation { duration: 140 } }
         accentStart: radial.accentA(cat.index)
         accentEnd: radial.accentB(cat.index)
-        hint: radial.hintFor(cat.index)
+        hint: radial.actionTarget ? "" : radial.hintFor(cat.index)
         hot: radial.focusLevel === 1 ? cat.index === radial.catIndex : cat.modelData.id === radial.catId
         glyph: cat.modelData.icon
         family: cat.modelData.iconFont || ""
         // Counts crowd a full ring; the focused one and searches keep theirs.
-        label: cat.modelData.label + (cat.hot || radial.searching || !radial.crowded ? " · " + cat.matches : "")
-        onEntered: { radial.focusLevel = 1; radial.catIndex = cat.index }
-        onClicked: radial.openCategory(cat.index)
+        label: cat.modelData.newSlot
+          ? (radial.naming ? "“" + radial.naming.text + "▌”" : cat.modelData.label)
+          : cat.modelData.label + (cat.hot || radial.searching || !radial.crowded ? " · " + cat.matches : "")
+        hasMenu: radial.ringId === "apps" && cat.modelData.id !== "fav" && cat.modelData.id !== "recent" && !cat.modelData.newSlot
+        onEntered: { if (radial.modal) return; radial.focusLevel = 1; radial.catIndex = cat.index }
+        onClicked: {
+          if (radial.pointerBlocked()) return
+          if (radial.carry) radial.dropOn(cat.index)
+          else radial.openCategory(cat.index)
+        }
+        onRightClicked: {
+          if (radial.pointerBlocked() || radial.carry) return
+          radial.focusLevel = 1
+          radial.catIndex = cat.index
+          radial.openActions({ kind: "group", group: cat.modelData })
+        }
       }
     }
 
@@ -1103,9 +1426,10 @@ Item {
         x: scene.width / 2 + Math.cos(app.angle) * app.distance - width / 2
         y: scene.height / 2 + Math.sin(app.angle) * app.distance - height / 2
         opacity: radial.appReveal * (radial.searching && radial.matchScore(app.modelData) < 0 ? 0.25 : 1)
+          * (radial.actionTarget ? 0.3 : 1)
         accentStart: radial.accentA(radial.catPos)
         accentEnd: radial.accentB(radial.catPos)
-        hint: radial.hintFor(app.index)
+        hint: radial.actionTarget ? "" : radial.hintFor(app.index)
         hot: radial.focusLevel === 2 && radial.pageStart + app.index === radial.appIndex
         iconSource: app.modelData.kind === "app" && radial.menu && radial.menu.appLibrary ? radial.menu.appLibrary.iconSource(app.modelData.appIcon) : ""
         glyph: app.modelData.glyph
@@ -1114,10 +1438,43 @@ Item {
         // A crowded ring can't fit every name; the focused one always shows.
         showLabel: radial.appLabels
         pinned: app.modelData.kind === "app" && radial.menu.isPinned(app.modelData.appId)
-        pinnable: app.modelData.kind === "app"
-        onRightClicked: { radial.focusLevel = 2; radial.setApp(radial.pageStart + app.index); radial.togglePinHot() }
-        onEntered: { radial.focusLevel = 2; radial.appIndex = radial.pageStart + app.index }
-        onClicked: radial.launchApp(radial.pageStart + app.index)
+        hasMenu: app.modelData.kind === "app"
+        onRightClicked: {
+          if (radial.pointerBlocked()) return
+          radial.focusLevel = 2
+          radial.setApp(radial.pageStart + app.index)
+          if (radial.ringId === "apps") radial.openActions({ kind: "app", row: app.modelData })
+          else radial.togglePinHot()
+        }
+        onEntered: { if (radial.modal) return; radial.focusLevel = 2; radial.appIndex = radial.pageStart + app.index }
+        onClicked: { if (!radial.pointerBlocked()) radial.launchApp(radial.pageStart + app.index) }
+      }
+    }
+
+    // ---------------------------------------------------- options ring
+    // A small ring just around the hub; the hub names the focused option.
+    Repeater {
+      model: radial.actionTarget ? radial.actions : []
+
+      delegate: RingButton {
+        id: act
+        required property int index
+        required property var modelData
+        readonly property real angle: -Math.PI / 2 + 2 * Math.PI * act.index / Math.max(1, radial.actions.length)
+        readonly property real distance: radial.hubRadius + radial.buttonSize * 0.4 + Style.space(14)
+        x: scene.width / 2 + Math.cos(act.angle) * act.distance - width / 2
+        y: scene.height / 2 + Math.sin(act.angle) * act.distance - height / 2
+        z: 3
+        scale: act.hot ? 0.9 : 0.8
+        accentStart: act.modelData.id === "uninstall" || act.modelData.id === "delete" ? "#e06c75" : (radial.menu ? radial.menu.ringStart : "white")
+        accentEnd: act.modelData.id === "uninstall" || act.modelData.id === "delete" ? "#be5046" : (radial.menu ? radial.menu.ringEnd : "white")
+        hint: radial.hintFor(act.index)
+        hot: act.index === radial.actionIndex
+        glyph: act.modelData.icon
+        label: act.modelData.label
+        noLabel: true
+        onEntered: radial.actionIndex = act.index
+        onClicked: radial.runAction(act.index)
       }
     }
   }
@@ -1149,7 +1506,7 @@ Item {
       horizontalAlignment: Text.AlignHCenter
       textFormat: Text.PlainText
       elide: Text.ElideRight
-      text: radial.focusItem ? String(radial.focusItem.detail || (radial.appFocus ? "" : radial.focusItem.apps.length + (radial.focusItem.apps.length === 1 ? " item" : " items"))) : ""
+      text: radial.statusText
       color: radial.menu ? radial.menu.foreground : "white"
       opacity: 0.8
       font.family: radial.menu ? radial.menu.fontFamily : ""
@@ -1159,8 +1516,11 @@ Item {
     Text {
       anchors.horizontalCenter: parent.horizontalCenter
       textFormat: Text.PlainText
-      text: radial.appsOpen
-        ? "Type to search  ·  1–9 pick  ·  ← → move" + (radial.pageCount > 1 && radial.catId !== "" ? "  ·  PgUp/PgDn pages" : "") + "  ·  Enter open  ·  Esc back"
+      text: radial.naming ? "Type a name  ·  Enter save  ·  Esc cancel"
+        : radial.actionTarget ? "← → choose  ·  1–9 pick  ·  Enter do it  ·  Esc close"
+        : radial.carry ? "← → choose a group  ·  1–9 drop there  ·  Enter / Ctrl+V drop  ·  Esc cancel"
+        : radial.appsOpen
+        ? (radial.ringId === "apps" ? "Right-click / Menu key options  ·  " : "") + "Type to search  ·  1–9 pick  ·  ← → move" + (radial.pageCount > 1 && radial.catId !== "" ? "  ·  PgUp/PgDn pages" : "") + "  ·  Enter open  ·  Esc back"
         : (radial.atRoot ? "Type to search  ·  ← → to move  ·  Esc to close" : "Type to search  ·  ← → to move  ·  Backspace to go back")
       color: radial.menu ? radial.menu.foreground : "white"
       opacity: 0.45
