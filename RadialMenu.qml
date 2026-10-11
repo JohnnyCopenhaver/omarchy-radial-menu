@@ -59,6 +59,48 @@ Item {
   property string armedDelete: ""   // group id waiting for a second Delete
   readonly property bool modal: radial.naming !== null || radial.actionTarget !== null
 
+  // The key cheat-sheet over the disc (? or F1).
+  property bool helpOpen: false
+  readonly property var helpSections: [
+    { title: "Moving around", rows: [
+      ["← →  Tab  wheel", "Move around the ring"],
+      ["Enter  click", "Open or run"],
+      ["1–9  0", "Pick a numbered item"],
+      ["Home  End", "First / last item"],
+      ["PgUp  PgDn  dots", "Turn pages"],
+      ["Esc  Backspace", "Go back"],
+      ["Right-click disc", "Go back"],
+      ["Click the hub", "Back out / close"],
+      ["Type", "Search"]
+    ] },
+    { title: "Apps & groups", rows: [
+      ["Ctrl+P", "Pin or unpin a favourite"],
+      ["Right-click  Menu", "Options for an app or group"],
+      ["Ctrl+X … Enter", "Move an app to a group"],
+      ["Ctrl+N", "New group"],
+      ["F2", "Rename your group"],
+      ["Delete ×2", "Delete your group"],
+      ["Delete on an app", "Uninstall (asks first)"],
+      ["?  F1", "Show / hide this help"]
+    ] }
+  ]
+
+  // Keys for the help sheet, ahead of everything else on the rings.
+  // Returns true when the key was consumed.
+  function helpKey(event) {
+    var k = event.key
+    // "?" only while nothing is being typed, so it can still be searched for.
+    var toggle = k === Qt.Key_F1 || (event.text === "?" && !radial.query && !radial.naming)
+    if (radial.helpOpen) {
+      // Any key closes the sheet without doing anything else.
+      if (k !== Qt.Key_Shift && k !== Qt.Key_Control && k !== Qt.Key_Alt && k !== Qt.Key_Meta) radial.helpOpen = false
+      return true
+    }
+    if (!toggle) return false
+    radial.helpOpen = true
+    return true
+  }
+
   // The line under the disc: what's going on, or what the focused item is.
   readonly property string statusText: {
     if (radial.naming)
@@ -809,7 +851,7 @@ Item {
     target: radial.menu
     function onActiveMenuChanged() { radial.closeApps(); radial.bloom(true) }
     function onOpenedChanged() {
-      if (!radial.menu.opened) { radial.bloomedThisOpen = false; radial.closeApps() }
+      if (!radial.menu.opened) { radial.bloomedThisOpen = false; radial.helpOpen = false; radial.closeApps() }
       else radial.bloom(false)
     }
   }
@@ -1125,9 +1167,19 @@ Item {
       height: width
       radius: width / 2
       color: "transparent"
-      border.width: 1
-      border.color: radial.menu ? Util.alpha(radial.menu.foreground, 0.10) : "transparent"
-      opacity: radial.catReveal
+      // While an app is being moved the track lights up: the groups are targets.
+      border.width: radial.carry ? 2 : 1
+      border.color: radial.menu ? (radial.carry ? radial.menu.ringStart : Util.alpha(radial.menu.foreground, 0.10)) : "transparent"
+      opacity: radial.catReveal * (radial.carry ? carryPulse.value : 1)
+
+      QtObject { id: carryPulse; property real value: 1 }
+      SequentialAnimation {
+        running: radial.carry !== null
+        loops: Animation.Infinite
+        onStopped: carryPulse.value = 1
+        NumberAnimation { target: carryPulse; property: "value"; from: 1; to: 0.35; duration: 700; easing.type: Easing.InOutSine }
+        NumberAnimation { target: carryPulse; property: "value"; from: 0.35; to: 1; duration: 700; easing.type: Easing.InOutSine }
+      }
     }
 
     Rectangle {
@@ -1208,7 +1260,8 @@ Item {
           width: radial.hubRadius * 1.6
           horizontalAlignment: Text.AlignHCenter
           textFormat: Text.PlainText
-          text: radial.focusItem ? radial.focusItem.label : (radial.hubEntry ? (radial.hubEntry.title || radial.hubEntry.label || "") : "")
+          text: radial.carry ? (hub.hovered ? "Cancel" : "Moving…")
+            : radial.focusItem ? radial.focusItem.label : (radial.hubEntry ? (radial.hubEntry.title || radial.hubEntry.label || "") : "")
           color: radial.menu ? radial.menu.foreground : "white"
           font.family: radial.menu ? radial.menu.fontFamily : ""
           font.pixelSize: Style.font.subtitle
@@ -1479,6 +1532,31 @@ Item {
     }
   }
 
+  // Above the disc while an app is being moved: what to do next.
+  Rectangle {
+    visible: radial.carry !== null
+    anchors.bottom: scene.top
+    anchors.bottomMargin: Style.space(10) - (1 - scene.scale) * scene.height / 2
+    anchors.horizontalCenter: parent.horizontalCenter
+    width: carryBanner.implicitWidth + Style.space(36)
+    height: carryBanner.implicitHeight + Style.space(16)
+    radius: height / 2
+    color: radial.menu ? Qt.tint(radial.menu.background, Util.alpha(radial.menu.ringStart, 0.18)) : "black"
+    border.width: 1
+    border.color: radial.menu ? radial.menu.ringStart : "white"
+
+    Text {
+      id: carryBanner
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: radial.carry ? "Moving " + radial.carry.row.label + "  —  click a group to put it there" : ""
+      color: radial.menu ? radial.menu.foreground : "white"
+      font.family: radial.menu ? radial.menu.fontFamily : ""
+      font.pixelSize: Style.font.subtitle
+      font.weight: Font.DemiBold
+    }
+  }
+
   // Under the disc: the search being typed, what the focused item is, and
   // a quiet reminder of the keys.
   Column {
@@ -1520,12 +1598,119 @@ Item {
         : radial.actionTarget ? "← → choose  ·  1–9 pick  ·  Enter do it  ·  Esc close"
         : radial.carry ? "← → choose a group  ·  1–9 drop there  ·  Enter / Ctrl+V drop  ·  Esc cancel"
         : radial.appsOpen
-        ? (radial.ringId === "apps" ? "Right-click / Menu key options  ·  " : "") + "Type to search  ·  1–9 pick  ·  ← → move" + (radial.pageCount > 1 && radial.catId !== "" ? "  ·  PgUp/PgDn pages" : "") + "  ·  Enter open  ·  Esc back"
-        : (radial.atRoot ? "Type to search  ·  ← → to move  ·  Esc to close" : "Type to search  ·  ← → to move  ·  Backspace to go back")
+        ? "Type to search  ·  1–9 pick  ·  ← → move" + (radial.pageCount > 1 && radial.catId !== "" ? "  ·  PgUp/PgDn pages" : "") + "  ·  Enter open  ·  Esc back  ·  ? help"
+        : (radial.atRoot ? "Type to search  ·  ← → to move  ·  Esc to close  ·  ? help" : "Type to search  ·  ← → to move  ·  Backspace to go back  ·  ? help")
       color: radial.menu ? radial.menu.foreground : "white"
       opacity: 0.45
       font.family: radial.menu ? radial.menu.fontFamily : ""
       font.pixelSize: Style.font.bodySmall
+    }
+  }
+  // ------------------------------------------------------------ help
+  // The cheat-sheet sits over the disc; any key or click puts it away.
+  Item {
+    anchors.fill: parent
+    visible: radial.helpOpen
+    z: 10
+
+    MouseArea {
+      anchors.fill: parent
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      onClicked: radial.helpOpen = false
+    }
+
+    Rectangle {
+      id: helpCard
+      anchors.centerIn: parent
+      anchors.verticalCenterOffset: scene.anchors.verticalCenterOffset
+      width: helpBody.implicitWidth + Style.space(56)
+      height: helpBody.implicitHeight + Style.space(48)
+      radius: Style.space(28)
+      color: radial.menu ? Util.alpha(radial.menu.background, 0.95) : "black"
+      border.width: 1
+      border.color: radial.menu ? Util.alpha(radial.menu.ringStart, 0.5) : "white"
+      layer.enabled: true
+      layer.effect: MultiEffect {
+        shadowEnabled: true
+        shadowColor: radial.menu ? radial.menu.glow : "black"
+        shadowBlur: 1.0
+        shadowOpacity: 0.5
+        shadowHorizontalOffset: 0
+        shadowVerticalOffset: 0
+        autoPaddingEnabled: true
+      }
+
+      Column {
+        id: helpBody
+        anchors.centerIn: parent
+        spacing: Style.space(18)
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          textFormat: Text.PlainText
+          text: "Keys"
+          color: radial.menu ? radial.menu.foreground : "white"
+          font.family: radial.menu ? radial.menu.fontFamily : ""
+          font.pixelSize: Style.font.heading
+          font.weight: Font.DemiBold
+        }
+
+        Row {
+          spacing: Style.space(44)
+
+          Repeater {
+            model: radial.helpSections
+
+            delegate: Column {
+              id: section
+              required property var modelData
+              required property int index
+              spacing: Style.space(10)
+
+              Text {
+                textFormat: Text.PlainText
+                text: section.modelData.title
+                color: radial.accentA(section.index)
+                font.family: radial.menu ? radial.menu.fontFamily : ""
+                font.pixelSize: Style.font.subtitle
+                font.weight: Font.DemiBold
+              }
+
+              Grid {
+                columns: 2
+                columnSpacing: Style.space(18)
+                rowSpacing: Style.space(7)
+
+                Repeater {
+                  model: section.modelData.rows.length * 2
+
+                  delegate: Text {
+                    required property int index
+                    readonly property bool isKey: index % 2 === 0
+                    textFormat: Text.PlainText
+                    text: section.modelData.rows[Math.floor(index / 2)][isKey ? 0 : 1]
+                    color: radial.menu ? (isKey ? radial.menu.selectedText : radial.menu.foreground) : "white"
+                    opacity: isKey ? 1 : 0.85
+                    font.family: radial.menu ? radial.menu.fontFamily : ""
+                    font.pixelSize: Style.font.subtitle
+                    font.weight: isKey ? Font.DemiBold : Font.Normal
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          textFormat: Text.PlainText
+          text: "Any key or click to close"
+          color: radial.menu ? radial.menu.foreground : "white"
+          opacity: 0.45
+          font.family: radial.menu ? radial.menu.fontFamily : ""
+          font.pixelSize: Style.font.bodySmall
+        }
+      }
     }
   }
 }

@@ -1311,6 +1311,11 @@ Item {
           return
         }
 
+        if (root.radialActive && radial.helpKey(event)) {
+          event.accepted = true
+          return
+        }
+
         // On the ring, the arrows and Tab travel around it (clockwise for
         // Right/Down/Tab); Backspace steps back out of a submenu.
         if (root.radialActive && radial.appsOpen && radial.handleKey(event)) {

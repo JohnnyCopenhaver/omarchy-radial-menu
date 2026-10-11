@@ -18,6 +18,7 @@ instead of in a list, and the two menus too big for one ring, **Apps** and
 - **Shortcuts**: up to three pinned or recent apps sit on the main ring next to Apps.
 - **Remembers your place**: each menu reopens on the item you last used (for 12 hours).
 - **Type to search**: typing switches to the normal searchable list.
+- **Built-in help**: press `?` or `F1` for a cheat-sheet of every key.
 - The ring follows your theme's colours.
 
 ## Install
@@ -53,6 +54,7 @@ omarchy plugin disable jlc.radial-menu
 | `Ctrl+N` / `F2` | New group / rename the focused group |
 | `Delete` twice on your group | Delete the group (its apps go back where they were) |
 | `Delete` on an app | Uninstall it (asks first) |
+| `?` / `F1` | Show the key cheat-sheet |
 | Type anything | Search |
 | `Esc` | Close |
 
