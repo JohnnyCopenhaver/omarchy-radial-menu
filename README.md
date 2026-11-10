@@ -10,7 +10,7 @@ instead of in a list, and the two menus too big for one ring, **Apps** and
 ## Features
 
 - Every Omarchy menu and submenu is shown as a ring. Small menus show all their items at once.
-- **Apps** groups your installed apps by freedesktop category and puts web apps in their own group.
+- **Apps** groups your installed apps by freedesktop category, gathers AI apps (Claude, ChatGPT, Perplexity, Ollama…) into an AI group by name, and puts web apps in their own group.
 - **Install** uses the same rings: Style, Development, Editor, AI, Gaming and the rest, plus a Packages group.
 - **Favourites**: pin any app with `Ctrl+P` or from its right-click options. Pins come first in Apps and get a ★.
 - **Your own groups**: move any app to another group, or make your own groups ("Work", "Streaming"…).

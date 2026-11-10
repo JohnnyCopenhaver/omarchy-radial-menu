@@ -169,6 +169,8 @@ Item {
   // Freedesktop "Categories" → the handful of groups worth a button. The
   // first matching rule wins, so a game that is also "Network" lands in Games.
   readonly property var categoryDefs: [
+    { id: "ai",       label: "AI",       icon: "\udb81\udea9", keys: ["ArtificialIntelligence"],
+      names: /^(claude|hermes|open ?code|chatgpt|perplexity|gemini|grok|copilot|ollama|lm ?studio|deepseek|mistral|le chat|alpaca|open ?webui)\b/i },
     { id: "games",    label: "Games",    icon: "\udb80\ude97", keys: ["Game"] },
     { id: "dev",      label: "Develop",  icon: "\udb80\udd74", keys: ["Development", "IDE"] },
     { id: "graphics", label: "Graphics", icon: "\udb80\udfd8", keys: ["Graphics"] },
@@ -267,6 +269,10 @@ Item {
       try { for (var c = 0; c < entry.categories.length; c++) cats.push(String(entry.categories[c])) } catch (e) { }
 
       var def = null
+      // Desktop files rarely say "AI" (Perplexity claims Utility), so match AI apps by name too.
+      var name = String(radial.menu.appLibrary.entryName(entry) || entry.name || "")
+      for (var n = 0; n < defs.length && !def; n++)
+        if (defs[n].names && defs[n].names.test(name)) def = defs[n]
       for (var d = 0; d < defs.length && !def; d++)
         for (var k = 0; k < defs[d].keys.length; k++)
           if (cats.indexOf(defs[d].keys[k]) >= 0) { def = defs[d]; break }
@@ -315,7 +321,7 @@ Item {
     // Stable category order: user groups first as created, then the defs'
     // order with "Other" last; apps alphabetical.
     var order = custom.map(function(g) { return g.id })
-      .concat(["games", "dev", "graphics", "media", "internet", "web", "office", "system", "utility", "other"])
+      .concat(["ai", "games", "dev", "graphics", "media", "internet", "web", "office", "system", "utility", "other"])
     out.sort(function(a, b) { return order.indexOf(a.id) - order.indexOf(b.id) })
     for (var g = 0; g < out.length; g++)
       out[g].apps.sort(function(a, b) { return a.label.toLowerCase() < b.label.toLowerCase() ? -1 : (a.label.toLowerCase() > b.label.toLowerCase() ? 1 : 0) })
