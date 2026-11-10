@@ -957,7 +957,10 @@ Item {
     var row = displayModel.get(index)
     root.remember("menu:" + root.activeMenu, row.itemId)
     var ringTarget = row.target || row.itemId
-    if ((row.kind === "menu" || row.kind === "link") && root.radialActive && root.ringMenus.indexOf(ringTarget) >= 0) {
+    // Omarchy 4.5 gave Apps an action (the dock's app grid), making it kind
+    // "action"; the radial menu still fans it out as rings.
+    var ringable = row.kind === "menu" || row.kind === "link" || row.itemId === "apps"
+    if (ringable && root.radialActive && root.ringMenus.indexOf(ringTarget) >= 0) {
       // These menus are too long for one ring: fan them out as category and item rings.
       if (radial.appsOpen) radial.closeApps()
       else if (!radial.openApps(ringTarget)) root.setActiveMenu(ringTarget, true, fromPointer)
