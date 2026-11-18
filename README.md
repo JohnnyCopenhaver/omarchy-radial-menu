@@ -38,6 +38,25 @@ To go back to the stock menu:
 omarchy plugin disable jlc.radial-menu
 ```
 
+## Requirements
+
+- Omarchy 4.x with the Quattro shell (tested on Omarchy 4.5).
+- No extra packages. The plugin runs the same `omarchy-*` commands as the
+  built-in menu. It needs no root access and installs no services.
+- It never edits your Omarchy config. It only writes its own state files (see Notes).
+
+## Remove
+
+```bash
+omarchy plugin remove jlc.radial-menu
+```
+
+Removing it brings back the built-in menu. To clear its saved pins and groups as well:
+
+```bash
+rm -f ~/.local/state/omarchy/radial-menu-*.json
+```
+
 ## Keys
 
 | Key | Action |
@@ -60,7 +79,7 @@ omarchy plugin disable jlc.radial-menu
 
 ## Notes
 
-- This is a fork of Omarchy's built-in menu plugin (Omarchy 4.0.x).
+- This is a fork of Omarchy's built-in menu plugin (originally Omarchy 4.0.x, kept up to date through 4.5).
   `MenuModel.js` and most of `Menu.qml` come from upstream; the ring UI is
   `RadialMenu.qml`. A large Omarchy update to the built-in menu may need a
   matching update here.

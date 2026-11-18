@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jlc.radial-menu",
   "name": "Radial Menu",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "John Copenhaver",
   "license": "MIT",
   "description": "A radial (pie) replacement for the Omarchy menu, with category rings for apps and installers, pins, and recents",
