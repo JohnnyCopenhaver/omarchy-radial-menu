@@ -12,7 +12,10 @@ instead of in a list, and the two menus too big for one ring, **Apps** and
 - Every Omarchy menu and submenu is shown as a ring. Small menus show all their items at once.
 - **Apps** groups your installed apps by freedesktop category, gathers AI apps (Claude, ChatGPT, Perplexity, Ollama…) into an AI group by name, and puts web apps in their own group.
 - **Install** uses the same rings: Style, Development, Editor, AI, Gaming and the rest, plus a Packages group.
-- **Favourites**: pin any app with `Ctrl+P` or from its right-click options. Pins come first in Apps and get a ★.
+- **Favourites**: pin any app with `Ctrl+P` or from its right-click options. Pins come first in Apps and get a ★; rearrange them with `Ctrl+←`/`Ctrl+→`.
+- **Switch, don't relaunch**: apps with a window open get a dot; picking one brings its window forward (`Shift+Enter` starts another copy).
+- **Your own commands**: choose *Add command* from a group's options to put a shell command in that group (type it or paste it with `Ctrl+V`, then name it). Its own options edit, rename, run it in a terminal, or remove it.
+- **Recent**: right-click an app in Recent to *Forget* it, or Recent itself to *Clear Recent* (`Ctrl+Z` undoes either).
 - **Your own groups**: move any app to another group, or make your own groups ("Work", "Streaming"…).
   Moved apps stay put; deleting one of your groups sends its apps back to their usual groups.
 - **Shortcuts**: up to three pinned or recent apps sit on the main ring next to Apps.
@@ -68,10 +71,13 @@ rm -f ~/.local/state/omarchy/radial-menu-*.json
 | `PgUp` / `PgDn` / dots in the hub | Change page on long rings |
 | `Backspace` / right-click the disc / click the hub | Go back |
 | `Ctrl+P` | Pin or unpin a favourite |
-| Right-click / `Menu` key / `Shift+F10` | Options: pin, move, uninstall; rename or delete your groups |
+| `Ctrl+←` / `Ctrl+→` | Move a favourite earlier or later |
+| `Shift+Enter` | Start another copy of an app that's already open |
+| Right-click / `Menu` key / `Shift+F10` | Options: pin, move, uninstall; rename or delete your groups; add a command to a group; Forget / Clear Recent |
 | `Ctrl+X`, then `Enter` / `Ctrl+V` | Move an app: pick it up, choose a group (or **New group**), drop it |
 | `Ctrl+N` / `F2` | New group / rename the focused group |
-| `Delete` twice on your group | Delete the group (its apps go back where they were) |
+| `Delete` on your group | Delete the group (its apps go back where they were) |
+| `Ctrl+Z` | Undo the last delete, remove, Forget or Clear Recent (for 10 seconds) |
 | `Delete` on an app | Uninstall it (asks first) |
 | `?` / `F1` | Show the key cheat-sheet |
 | Type anything | Search |
@@ -84,7 +90,7 @@ rm -f ~/.local/state/omarchy/radial-menu-*.json
   `RadialMenu.qml`. A large Omarchy update to the built-in menu may need a
   matching update here.
 - State is kept in `~/.local/state/omarchy/radial-menu-state.json` (pins, last
-  position, your groups and moved apps) and `radial-menu-usage.json` (recent apps).
+  position, your groups and moved apps, your commands) and `radial-menu-usage.json` (recent apps).
 - After editing the QML, run `omarchy restart shell`.
 
 ## License

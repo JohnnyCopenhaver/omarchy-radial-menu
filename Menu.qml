@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import QtQuick
 import QtQuick.Effects
 import qs.Commons
@@ -150,6 +151,18 @@ Item {
 
   // Launch counts for the Recent ring: appId → { n, t }.
   property var usage: ({})
+  // Replace the launch history (Forget / Clear Recent, and their undo).
+  function setUsage(next) {
+    root.usage = next
+    usageFile.setText(JSON.stringify(next))
+  }
+
+  function forgetUsage(appId) {
+    var next = ({})
+    for (var k in root.usage) if (k !== appId) next[k] = root.usage[k]
+    root.setUsage(next)
+  }
+
   function recordUsage(appId) {
     var next = ({})
     for (var k in root.usage) next[k] = root.usage[k]
@@ -168,12 +181,14 @@ Item {
   }
 
   // Pinned apps, the last item used per ring, and the user's own app groups:
-  // { pins: [appId], last: { key: { v, t } }, groups: [{ id, label }], assign: { appId: groupId } }.
+  // { pins: [appId], last: { key: { v, t } }, groups: [{ id, label }], assign: { appId: groupId },
+  //   commands: [{ id, label, command, terminal?, group? }], — the user's own commands (group: where they show; Favourites when unset)
+  //   favOrder: [itemId] }                             — Favourites order, when rearranged
   property var menuState: root.emptyState()
   // A remembered position older than this is stale: open fresh instead.
   readonly property int rememberMs: 12 * 3600 * 1000
 
-  function emptyState() { return { pins: [], last: {}, groups: [], assign: {} } }
+  function emptyState() { return { pins: [], last: {}, groups: [], assign: {}, commands: [], favOrder: [] } }
 
   function saveState(next) {
     root.menuState = next
@@ -234,6 +249,30 @@ Item {
     root.patchState({ groups: root.menuState.groups.filter(function(g) { return g.id !== id }), assign: assign })
   }
 
+  // The user's own shell commands, shown in Favourites.
+  function addCommand(label, command, group) {
+    var id = "c." + Date.now().toString(36)
+    var c = { id: id, label: label, command: command }
+    if (group && group !== "fav") c.group = group
+    root.patchState({ commands: root.menuState.commands.concat([c]) })
+    return id
+  }
+
+  function updateCommand(id, fields) {
+    root.patchState({ commands: root.menuState.commands.map(function(c) {
+      if (c.id !== id) return c
+      var next = { id: c.id, label: fields.label || c.label, command: fields.command || c.command }
+      if (c.group) next.group = c.group
+      var term = fields.terminal !== undefined ? fields.terminal : c.terminal
+      if (term) next.terminal = true
+      return next
+    }) })
+  }
+
+  function removeCommand(id) {
+    root.patchState({ commands: root.menuState.commands.filter(function(c) { return c.id !== id }) })
+  }
+
   function recall(key) {
     var e = root.menuState.last[key]
     return e && Date.now() - (e.t || 0) < root.rememberMs ? e.v : null
@@ -259,7 +298,9 @@ Item {
           pins: Array.isArray(s.pins) ? s.pins : [],
           last: s.last || {},
           groups: Array.isArray(s.groups) ? s.groups : [],
-          assign: s.assign || {}
+          assign: s.assign || {},
+          commands: Array.isArray(s.commands) ? s.commands.filter(function(c) { return c && c.id && c.command }) : [],
+          favOrder: Array.isArray(s.favOrder) ? s.favOrder : []
         }
       } catch (e) { root.menuState = root.emptyState() }
     }
@@ -981,6 +1022,16 @@ Item {
     if (root.appLibrary) root.appLibrary.launch(appId, label)
   }
 
+  // Bring an app's open window forward instead of starting another copy.
+  function switchToWindow(appId, address) {
+    if (!/^0x[0-9a-f]+$/i.test(String(address || ""))) return
+    applySerial = requestSerial
+    opened = false
+    filterText = ""
+    root.recordUsage(appId)
+    Hyprland.dispatch('hl.dsp.focus({window = hl.get_window("address:' + address + '")})')
+  }
+
   function requestDeleteSelected() {
     var ringApp = radial.hotApp()
     if (ringApp) {
@@ -989,6 +1040,9 @@ Item {
       root.deleteConfirmOpen = true
       return
     }
+    // A ring item that isn't an app (a command, "New Web App…") must never
+    // reach the list row hidden behind the rings.
+    if (radial.appsOpen) return
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return
     var row = displayModel.get(root.selectedIndex)
     if (!row || row.kind !== "app") return

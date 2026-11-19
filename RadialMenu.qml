@@ -1,5 +1,7 @@
 import QtQuick
 import QtQuick.Effects
+import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 
 // Radial presentation of the Omarchy menu: the current menu's rows sit on a
@@ -16,16 +18,22 @@ Item {
   // The hub shows the Apps entry (and the open category) while its rings are out.
   readonly property bool hubRoot: radial.atRoot && !radial.appsOpen
   readonly property var hubEntry: radial.appsOpen ? (radial.menu ? radial.menu.item(radial.ringId) : null) : radial.activeEntry
+  // On the rings the hub mirrors the focused button's icon.
+  readonly property var hubFocus: radial.appsOpen && !radial.carry ? radial.focusItem : null
+  readonly property string hubImage: radial.hubFocus && radial.hubFocus.kind === "app" && radial.hubFocus.appIcon && radial.menu && radial.menu.appLibrary
+    ? radial.menu.appLibrary.iconSource(radial.hubFocus.appIcon) : ""
+  readonly property string hubGlyph: radial.hubFocus ? String(radial.hubFocus.glyph || radial.hubFocus.icon || "") : ""
   readonly property var activeEntry: radial.menu ? radial.menu.item(radial.menu.activeMenu) : null
 
   // Geometry. The ring grows with the number of items so labels never
-  // collide, and the whole disc scales down if it would overflow the screen.
+  // collide, and the whole disc scales down if it would overflow the screen
+  // (whichever of width or height is tighter, for portrait/narrow monitors).
   readonly property real buttonSize: Style.space(60)
   readonly property real labelHeight: Style.font.subtitle + Style.space(10)
   readonly property real ringRadius: Math.max(Style.space(150), radial.count * (radial.buttonSize + Style.space(40)) / (2 * Math.PI))
   readonly property real discRadius: radial.animOuter + radial.buttonSize / 2 + radial.labelHeight + Style.space(20)
   readonly property real hubRadius: Style.space(64)
-  readonly property real fit: Math.min(1, (radial.height - Style.space(80)) / (radial.discRadius * 2))
+  readonly property real fit: Math.min(1, (Math.min(radial.width, radial.height) - Style.space(80)) / (radial.discRadius * 2))
 
   // ------------------------------------------------- apps category rings
   //
@@ -50,13 +58,15 @@ Item {
 
   // Rearranging the Apps groups. Only one of these is ever active:
   //  carry       — an app picked up (Ctrl+X / "Move to…"), waiting for a group
-  //  naming      — typing a name for a new or renamed group
+  //  naming      — typing a group name, or a Favourites command and its name
   //  actionTarget — the right-click / Menu-key options ring is out
   property var carry: null          // { row, fromCat }
-  property var naming: null         // { mode: "new" | "rename", groupId, text }
-  property var actionTarget: null   // { kind: "app", row } | { kind: "group", group }
+  // { mode: "new" | "rename" | "cmdLine" | "cmdName", text, groupId?, cmdId?, command? }
+  property var naming: null
+  property var actionTarget: null   // { kind: "app" | "command", row } | { kind: "group", group }
   property int actionIndex: 0
-  property string armedDelete: ""   // group id waiting for a second Delete
+  // The last Remove / Delete group, for Ctrl+Z: { label, fields, focus }.
+  property var undoInfo: null
   readonly property bool modal: radial.naming !== null || radial.actionTarget !== null
 
   // The key cheat-sheet over the disc (? or F1).
@@ -75,11 +85,15 @@ Item {
     ] },
     { title: "Apps & groups", rows: [
       ["Ctrl+P", "Pin or unpin a favourite"],
+      ["Ctrl+← →", "Move a favourite"],
+      ["Shift+Enter", "New window of an open app"],
       ["Right-click  Menu", "Options for an app or group"],
       ["Ctrl+X … Enter", "Move an app to a group"],
       ["Ctrl+N", "New group"],
       ["F2", "Rename your group"],
-      ["Delete ×2", "Delete your group"],
+      ["Menu → Add command", "Put a command in that group"],
+      ["Delete", "Delete your group"],
+      ["Ctrl+Z", "Undo a delete or remove"],
       ["Delete on an app", "Uninstall (asks first)"],
       ["?  F1", "Show / hide this help"]
     ] }
@@ -104,21 +118,27 @@ Item {
   // The line under the disc: what's going on, or what the focused item is.
   readonly property string statusText: {
     if (radial.naming)
-      return (radial.naming.mode === "rename" ? "Rename group: “" : "New group: “") + radial.naming.text + "▌”"
+      return radial.namingPrompt[radial.naming.mode] + "“" + radial.naming.text + "▌”"
     if (radial.actionTarget)
-      return "Options for " + (radial.actionTarget.kind === "app" ? radial.actionTarget.row.label : radial.actionTarget.group.label)
+      return "Options for " + (radial.actionTarget.row ? radial.actionTarget.row.label : radial.actionTarget.group.label)
     if (radial.carry) {
       var g = radial.groups[radial.catIndex]
       return "Move " + radial.carry.row.label + " to " + (g ? (g.newSlot ? "a new group" : g.label) : "…")
     }
-    if (radial.armedDelete) {
-      var d = radial.groups[radial.groupPos(radial.armedDelete)]
-      return "Press Delete again to remove “" + (d ? d.label : "") + "” — its apps go back to their usual groups"
-    }
+    if (radial.undoInfo)
+      return radial.undoInfo.label + "  ·  Ctrl+Z or click to undo"
     var f = radial.focusItem
     if (!f) return ""
-    return String(f.detail || (radial.appFocus ? "" : f.apps.length + (f.apps.length === 1 ? " item" : " items")))
+    if (radial.appFocus && f.kind === "app" && radial.windowFor(f))
+      return "Open  ·  Enter switches to it  ·  Shift+Enter starts another"
+    if (f.detail || radial.appFocus || !f.apps) return String(f.detail || "")
+    return f.apps.length + (f.apps.length === 1 ? " item" : " items")
   }
+
+  readonly property var namingPrompt: ({
+    "new": "New group: ", "rename": "Rename group: ",
+    "cmdLine": "Command: ", "cmdName": "Name it: "
+  })
 
   readonly property var allCatApps: {
     for (var i = 0; i < radial.groups.length; i++)
@@ -297,6 +317,8 @@ Item {
         label: String(radial.menu.appLibrary.entryName(entry) || appId),
         appIcon: String(entry.icon || ""),
         detail: String(radial.menu.appLibrary.entrySubtext(entry) || ""),
+        search: radial.entrySearch(entry),
+        wmClasses: [String(entry.startupClass || ""), appId].filter(function(c) { return c }).map(function(c) { return c.toLowerCase() }),
         groupId: def.id,
         autoCat: auto.id,
         autoLabel: auto.label
@@ -316,6 +338,20 @@ Item {
     for (var c2 = 0; c2 < custom.length; c2++) {
       var cg = customById[custom[c2].id]
       if (!byId[cg.id]) { byId[cg.id] = { id: cg.id, label: cg.label, icon: cg.icon, custom: true, apps: [] }; out.push(byId[cg.id]) }
+    }
+
+    // Commands placed in a group join its apps; any whose group is gone
+    // (or was never set) go to Favourites.
+    var favCmds = []
+    var allCmds = radial.menu.menuState.commands || []
+    for (var uc = 0; uc < allCmds.length; uc++) {
+      var gid = allCmds[uc].group || "fav"
+      if (gid !== "fav" && !byId[gid]) {
+        var bd = customById[gid] || radial.builtinDef(gid)
+        if (bd) { byId[gid] = { id: gid, label: bd.label, icon: bd.icon, custom: !!bd.custom, apps: [] }; out.push(byId[gid]) }
+      }
+      if (gid !== "fav" && byId[gid]) byId[gid].apps.push(radial.commandRow(allCmds[uc], gid))
+      else favCmds.push(allCmds[uc])
     }
 
     // Stable category order: user groups first as created, then the defs'
@@ -341,9 +377,91 @@ Item {
 
     var recent = radial.recentIds().filter(function(id) { return byApp[id] }).map(function(id) { return byApp[id] })
     if (recent.length > 0) out.unshift({ id: "recent", label: "Recent", icon: "󰋚", apps: recent })
-    var pins = radial.menu.menuState.pins.filter(function(id) { return byApp[id] }).map(function(id) { return byApp[id] })
+    var pins = radial.sortFav(radial.menu.menuState.pins.filter(function(id) { return byApp[id] }).map(function(id) { return byApp[id] })
+      .concat(favCmds.map(function(c) { return radial.commandRow(c, "fav") })))
     if (pins.length > 0) out.unshift({ id: "fav", label: "Favourites", icon: "\uf005", apps: pins })
     return out
+  }
+
+  // Favourites in the user's order; anything not yet placed keeps its spot at the end.
+  function sortFav(items) {
+    var order = radial.menu.menuState.favOrder || []
+    var keyed = items.map(function(it, i) {
+      var at = order.indexOf(it.itemId)
+      return { it: it, k: at >= 0 ? at : order.length + i }
+    })
+    keyed.sort(function(a, b) { return a.k - b.k })
+    return keyed.map(function(x) { return x.it })
+  }
+
+  // Move the focused favourite one place (no wrapping), and keep it focused.
+  function moveFav(delta) {
+    var apps = radial.allCatApps
+    var i = radial.appIndex, j = i + delta
+    if (radial.catId !== "fav" || j < 0 || j >= apps.length) return
+    var ids = apps.map(function(a) { return a.itemId })
+    var moved = ids[i]
+    ids[i] = ids[j]
+    ids[j] = moved
+    radial.menu.patchState({ favOrder: ids })
+    radial.refreshGroups()
+    radial.focusItemId(moved)
+  }
+
+  // ------------------------------------------------ open windows
+  // Window class → address of its most recently used window, read when the
+  // rings open. Apps are matched by StartupWMClass or desktop id.
+  property var openWindows: ({})
+  function scanWindows() {
+    var out = ({}), rank = ({})
+    var list = Hyprland.toplevels ? Hyprland.toplevels.values : []
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i]
+      var ipc = t.lastIpcObject || {}
+      var cls = String(ipc["class"] || (t.wayland ? t.wayland.appId : "") || "").toLowerCase()
+      var addr = String(ipc.address || t.address || "")
+      if (!cls || !addr) continue
+      if (addr.indexOf("0x") !== 0) addr = "0x" + addr
+      var r = ipc.focusHistoryID !== undefined ? Number(ipc.focusHistoryID) : 9999
+      if (out[cls] === undefined || r < rank[cls]) { out[cls] = addr; rank[cls] = r }
+    }
+    radial.openWindows = out
+  }
+  function windowFor(row) {
+    var c = row && row.wmClasses ? row.wmClasses : []
+    for (var i = 0; i < c.length; i++) if (radial.openWindows[c[i]]) return radial.openWindows[c[i]]
+    return ""
+  }
+
+  // Single-quote a string for bash.
+  function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'" }
+
+  // A terminal command opens in Omarchy's terminal. It closes when the
+  // command ends, unless it failed: then it waits so the error can be read.
+  function terminalAction(command) {
+    // A subshell, so an `exit` in the command still reaches the check.
+    var script = "(\n" + command + "\n)\ns=$?; if [ $s -ne 0 ]; then printf '\\n[exited with %s] Press Enter to close' $s; read -r _; fi"
+    return "omarchy-launch-tui --app-id=org.omarchy.radial-command bash -lc " + radial.shellQuote(script)
+  }
+
+  // A user command as a Favourites button; it runs through the action path.
+  function commandRow(c, groupId) {
+    return {
+      itemId: "cmd." + c.id,
+      kind: "command",
+      cmdId: c.id,
+      command: String(c.command),
+      terminal: !!c.terminal,
+      search: String(c.command),
+      action: c.terminal ? radial.terminalAction(c.command) : String(c.command),
+      appId: "",
+      appIcon: "",
+      glyph: "\uf120",
+      iconFont: "",
+      label: String(c.label),
+      detail: (c.terminal ? "In terminal · " : "") + String(c.command),
+      groupId: groupId || "fav"
+    }
   }
 
   // Each category gets its own gradient from the theme palette.
@@ -372,6 +490,7 @@ Item {
   function initialOf(label) { return String(label || "?").trim().charAt(0).toUpperCase() || "?" }
 
   function openApps(id) {
+    radial.scanWindows()
     radial.ringId = id || "apps"
     var built = radial.buildGroups()
     if (built.length === 0) return false
@@ -395,7 +514,7 @@ Item {
     radial.carry = null
     radial.naming = null
     radial.actionTarget = null
-    radial.armedDelete = ""
+    radial.undoInfo = null
     radial.appsOpen = false
     radial.catId = ""
     radial.query = ""
@@ -451,13 +570,16 @@ Item {
     radial.focusLevel = 2
   }
 
-  // i indexes the whole category.
-  function launchApp(i) {
+  // i indexes the whole category. An app that's already open is switched
+  // to, unless newCopy asks for another one.
+  function launchApp(i, newCopy) {
     var apps = radial.allCatApps
     if (i < 0 || i >= apps.length) return
     var it = apps[i]
     radial.menu.remember("ring:" + radial.ringId, { cat: radial.catId, item: it.itemId })
-    if (it.kind === "app") radial.menu.launchApp(it.appId, it.label)
+    var win = it.kind === "app" && !newCopy ? radial.windowFor(it) : ""
+    if (win) radial.menu.switchToWindow(it.appId, win)
+    else if (it.kind === "app") radial.menu.launchApp(it.appId, it.label)
     else if (it.kind === "menu" || it.kind === "link") radial.menu.setActiveMenu(it.target, true, false)
     else radial.menu.applySelected(it.itemId, it.action)
   }
@@ -560,6 +682,7 @@ Item {
     var n = radial.naming
     var t = n ? n.text.trim() : ""
     if (!t) return
+    if (n.mode === "cmdLine" || n.mode === "cmdName") { radial.commitCommand(n, t); return }
     radial.naming = null
     if (n.mode === "rename") {
       radial.menu.renameGroup(n.groupId, t)
@@ -582,7 +705,36 @@ Item {
     }
   }
 
+  // Keep the state fields an edit is about to change, so Ctrl+Z can put them back.
+  // usage, when given, is the launch history to restore as well.
+  function offerUndo(label, names, focus, usage) {
+    var fields = ({})
+    for (var i = 0; i < names.length; i++) fields[names[i]] = radial.menu.menuState[names[i]]
+    radial.undoInfo = { label: label, fields: fields, focus: focus, usage: usage || null }
+    undoTimer.restart()
+  }
+
+  function undo() {
+    var u = radial.undoInfo
+    if (!u) return
+    radial.undoInfo = null
+    if (Object.keys(u.fields).length > 0) radial.menu.patchState(u.fields)
+    if (u.usage) radial.menu.setUsage(u.usage)
+    radial.refreshGroups()
+    if (u.focus.itemId) radial.showApp(u.focus.groupId, u.focus.itemId)
+    else {
+      radial.catId = ""
+      radial.appReveal = 0
+      radial.focusLevel = 1
+      radial.catIndex = Math.max(0, radial.groupPos(u.focus.groupId))
+    }
+  }
+
+  Timer { id: undoTimer; interval: 10000; onTriggered: radial.undoInfo = null }
+
   function deleteGroup(id) {
+    var p = radial.groupPos(id)
+    radial.offerUndo("Deleted “" + (p >= 0 ? radial.groups[p].label : "") + "”", ["groups", "assign"], { groupId: id })
     radial.menu.deleteGroup(id)
     if (radial.catId === id) { radial.catId = ""; radial.appReveal = 0; radial.focusLevel = 1 }
     radial.refreshGroups()
@@ -599,10 +751,18 @@ Item {
         { id: "move", label: "Move to…", icon: "\uf047" }
       ]
       if (t.row.groupId !== t.row.autoCat) a.push({ id: "reset", label: "Back to " + t.row.autoLabel, icon: "\uf0e2" })
+      if (radial.catId === "recent") a.push({ id: "forget", label: "Forget", icon: "\uf1da" })
       a.push({ id: "uninstall", label: "Uninstall", icon: "\uf1f8" })
       return a
     }
-    var g = [{ id: "new", label: "New group", icon: "\uf067" }]
+    if (t.kind === "command") return [
+      { id: "cmdEdit", label: "Edit command", icon: "\uf120" },
+      { id: "cmdRename", label: "Rename", icon: "\uf040" },
+      { id: "cmdTerm", label: t.row.terminal ? "Run without terminal" : "Run in terminal", icon: t.row.terminal ? "\uf28d" : "\uf489" },
+      { id: "cmdRemove", label: "Remove", icon: "\uf1f8" }
+    ]
+    if (t.group.id === "recent") return [{ id: "recentClear", label: "Clear Recent", icon: "\uf1f8" }]
+    var g = [{ id: "new", label: "New group", icon: "\uf067" }, { id: "cmdAdd", label: "Add command", icon: "\uf120" }]
     if (t.group.custom) g.unshift({ id: "rename", label: "Rename", icon: "\uf040" }, { id: "delete", label: "Delete group", icon: "\uf1f8" })
     return g
   }
@@ -611,11 +771,11 @@ Item {
   function openActionsForFocus() {
     if (radial.ringId !== "apps") return
     if (radial.appFocus) {
-      var it = radial.hotApp()
-      if (it) radial.openActions({ kind: "app", row: it })
+      var it = radial.allCatApps[radial.appIndex]
+      if (it && (it.kind === "app" || it.kind === "command")) radial.openActions({ kind: it.kind, row: it })
     } else {
       var g = radial.groups[radial.catIndex]
-      if (g && g.id !== "fav" && g.id !== "recent") radial.openActions({ kind: "group", group: g })
+      if (g) radial.openActions({ kind: "group", group: g })
     }
   }
 
@@ -642,6 +802,74 @@ Item {
     else if (a.id === "rename") radial.naming = { mode: "rename", groupId: t.group.id, text: t.group.label }
     else if (a.id === "delete") radial.deleteGroup(t.group.id)
     else if (a.id === "new") radial.naming = { mode: "new", groupId: "", text: "" }
+    else if (a.id === "cmdAdd") radial.naming = { mode: "cmdLine", cmdId: "", target: t.group.id, text: "" }
+    else if (a.id === "cmdEdit") radial.naming = { mode: "cmdLine", cmdId: t.row.cmdId, text: t.row.command }
+    else if (a.id === "cmdTerm") {
+      radial.menu.updateCommand(t.row.cmdId, { terminal: !t.row.terminal })
+      radial.refreshGroups()
+      radial.showApp(t.row.groupId, t.row.itemId)
+    }
+    else if (a.id === "cmdRename") radial.naming = { mode: "cmdName", cmdId: t.row.cmdId, command: "", text: t.row.label }
+    else if (a.id === "cmdRemove") {
+      radial.offerUndo("Removed “" + t.row.label + "”", ["commands"], { groupId: t.row.groupId, itemId: t.row.itemId })
+      radial.menu.removeCommand(t.row.cmdId)
+      radial.afterRemoval()
+    }
+    else if (a.id === "forget") {
+      radial.offerUndo("Forgot “" + t.row.label + "”", [], { groupId: "recent", itemId: t.row.itemId }, radial.menu.usage)
+      radial.menu.forgetUsage(t.row.appId)
+      radial.afterRemoval()
+    }
+    else if (a.id === "recentClear") {
+      radial.offerUndo("Cleared Recent", [], { groupId: "recent" }, radial.menu.usage)
+      radial.menu.setUsage({})
+      radial.afterRemoval()
+    }
+  }
+
+  // After something left the open group: stay on a neighbour, or step out
+  // if the group is now gone.
+  function afterRemoval() {
+    var open = radial.catId
+    radial.refreshGroups()
+    if (open === "" ) { radial.catIndex = Math.min(radial.catIndex, radial.groups.length - 1); return }
+    if (radial.groupPos(open) < 0) { radial.catId = ""; radial.appReveal = 0; radial.focusLevel = 1; radial.catIndex = 0 }
+    else radial.setApp(Math.max(0, Math.min(radial.appIndex, radial.allCatApps.length - 1)))
+  }
+
+  // Where a command lives now.
+  function commandGroup(cmdId) {
+    var cs = radial.menu.menuState.commands || []
+    for (var i = 0; i < cs.length; i++)
+      if (cs[i].id === cmdId) return radial.groupPos(cs[i].group || "") >= 0 ? cs[i].group : "fav"
+    return "fav"
+  }
+
+  // A name for a new command: its program's name, capitalised ("btop -t" → "Btop").
+  function suggestName(command) {
+    var w = String(command).trim().split(/\s+/)[0] || ""
+    w = w.split("/").pop()
+    return (w.charAt(0).toUpperCase() + w.slice(1)).slice(0, 24)
+  }
+
+  // Command typing and naming both end here.
+  function commitCommand(n, t) {
+    if (n.mode === "cmdLine" && n.cmdId) {
+      radial.menu.updateCommand(n.cmdId, { command: t })
+      radial.naming = null
+      radial.refreshGroups()
+      radial.showApp(radial.commandGroup(n.cmdId), "cmd." + n.cmdId)
+    } else if (n.mode === "cmdLine") {
+      // Then ask for its name.
+      radial.naming = { mode: "cmdName", cmdId: "", command: t, target: n.target, text: radial.suggestName(t) }
+    } else {
+      radial.naming = null
+      var id = n.cmdId
+      if (id) radial.menu.updateCommand(id, { label: t })
+      else id = radial.menu.addCommand(t, n.command, n.target === "recent" ? "fav" : n.target)
+      radial.refreshGroups()
+      radial.showApp(radial.commandGroup(id), "cmd." + id)
+    }
   }
 
   function printable(event) {
@@ -655,9 +883,34 @@ Item {
     var n = radial.naming
     if (k === Qt.Key_Escape) radial.naming = null
     else if (k === Qt.Key_Return || k === Qt.Key_Enter) radial.commitName()
-    else if (Util.editsFilter(event, n.text)) radial.naming = { mode: n.mode, groupId: n.groupId, text: Util.editedFilter(event, n.text) }
-    else if (radial.printable(event) && n.text.length < 24) radial.naming = { mode: n.mode, groupId: n.groupId, text: n.text + event.text }
+    else if (k === Qt.Key_V && event.modifiers === Qt.ControlModifier) pasteProc.running = true
+    else if (Util.editsFilter(event, n.text)) radial.setNamingText(Util.editedFilter(event, n.text))
+    else if (radial.printable(event)) radial.setNamingText(n.text + event.text)
     return true
+  }
+
+  // Commands may be long; names stay short enough for a button.
+  function namingLimit() { return radial.naming && radial.naming.mode === "cmdLine" ? 1000 : 24 }
+
+  function setNamingText(text) {
+    var n = radial.naming
+    if (!n) return
+    var next = ({})
+    for (var k in n) next[k] = n[k]
+    next.text = String(text).slice(0, radial.namingLimit())
+    radial.naming = next
+  }
+
+  // Ctrl+V while typing a name or command: one line from the clipboard.
+  Process {
+    id: pasteProc
+    command: ["wl-paste", "--no-newline", "--type", "text"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var line = String(this.text || "").split("\n")[0]
+        if (radial.naming && line) radial.setNamingText(radial.naming.text + line)
+      }
+    }
   }
 
   function actionKey(event) {
@@ -692,16 +945,33 @@ Item {
     return false
   }
 
+  // What else an app answers to: its generic name ("Web Browser"), keywords,
+  // description and desktop id, so "browser" finds Chrome.
+  function entrySearch(entry) {
+    var kw = ""
+    try { if (entry.keywords) kw = Array.prototype.join.call(entry.keywords, " ") } catch (e) { }
+    return [entry.genericName, kw, entry.comment, entry.id].join(" ")
+  }
+
+  // Lower-cased words, with camelCase and . _ - / split apart.
+  function wordsOf(text) {
+    return " " + String(text || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[._:\/\\-]+/g, " ").toLowerCase().replace(/\s+/g, " ") + " "
+  }
+
   // -1 when the item doesn't fit the search; higher is a better match.
+  // The name always beats the extra text; every word typed must be found.
   function matchScore(it) {
     var q = radial.query.trim().toLowerCase()
     if (q === "") return 0
     var l = String(it.label || "").toLowerCase()
-    if (l.indexOf(q) === 0) return 3
-    if (l.indexOf(" " + q) >= 0) return 2
-    if (l.indexOf(q) >= 0) return 1
-    var id = String(it.appId || "").toLowerCase()
-    return id !== "" && id.indexOf(q) >= 0 ? 1 : -1
+    if (l.indexOf(q) === 0) return 4
+    if (l.indexOf(" " + q) >= 0) return 3
+    if (l.indexOf(q) >= 0) return 2
+    var hay = radial.wordsOf(it.label + " " + (it.search || it.appId || ""))
+    var words = q.split(/\s+/)
+    for (var i = 0; i < words.length; i++)
+      if (hay.indexOf(" " + words[i]) < 0) return -1
+    return 1
   }
 
   function groupMatches(g) {
@@ -787,26 +1057,27 @@ Item {
     if (radial.carry) return radial.carryKey(event)
     var k = event.key
     var ctrl = event.modifiers & Qt.ControlModifier
-    var armed = radial.armedDelete
-    radial.armedDelete = ""
     if (k === Qt.Key_Menu || (k === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) { radial.openActionsForFocus(); return true }
+    if (ctrl && k === Qt.Key_Z) { radial.undo(); return true }
     if (ctrl && k === Qt.Key_X) { radial.startCarry(); return true }
     if (ctrl && k === Qt.Key_N && radial.ringId === "apps") { radial.naming = { mode: "new", groupId: "", text: "" }; return true }
     if (!radial.appFocus) {
       var fg = radial.groups[radial.catIndex]
       if (k === Qt.Key_F2 && fg && fg.custom) { radial.naming = { mode: "rename", groupId: fg.id, text: fg.label }; return true }
-      // Delete on a user group removes it (press twice); on any other group
-      // it does nothing — it must never reach an app hidden behind the rings.
+      // Delete on a user group removes it (Ctrl+Z brings it back); on any
+      // other group it does nothing — it must never reach an app hidden
+      // behind the rings.
       if (k === Qt.Key_Delete) {
-        if (fg && fg.custom) {
-          if (armed === fg.id) radial.deleteGroup(fg.id)
-          else radial.armedDelete = fg.id
-        }
+        if (fg && fg.custom) radial.deleteGroup(fg.id)
         return true
       }
     }
     if (k === Qt.Key_Escape) { radial.back(); return true }
     if (k === Qt.Key_Backspace && !radial.query) { radial.back(); return true }
+    if (ctrl && radial.appFocus && radial.catId === "fav" && !radial.searching) {
+      if (k === Qt.Key_Right || k === Qt.Key_Down) { radial.moveFav(1); return true }
+      if (k === Qt.Key_Left || k === Qt.Key_Up) { radial.moveFav(-1); return true }
+    }
     if (k === Qt.Key_Right || k === Qt.Key_Down || k === Qt.Key_Tab) { radial.step(1); return true }
     if (k === Qt.Key_Left || k === Qt.Key_Up || k === Qt.Key_Backtab) { radial.step(-1); return true }
     if (k === Qt.Key_Home || k === Qt.Key_End) { radial.jump(k === Qt.Key_End); return true }
@@ -814,7 +1085,7 @@ Item {
     if (k === Qt.Key_PageDown) { radial.changePage(1); return true }
     if (k === Qt.Key_PageUp) { radial.changePage(-1); return true }
     if (k === Qt.Key_Return || k === Qt.Key_Enter) {
-      if (radial.focusLevel === 2 && radial.catId !== "") radial.launchApp(radial.appIndex)
+      if (radial.focusLevel === 2 && radial.catId !== "") radial.launchApp(radial.appIndex, !!(event.modifiers & Qt.ShiftModifier))
       else radial.openCategory(radial.catIndex)
       return true
     }
@@ -944,6 +1215,7 @@ Item {
     property bool dim: false
     property string hint: ""
     property bool pinned: false
+    property bool running: false
     property bool hasMenu: false
     property bool noLabel: false
     property color accentStart: radial.menu ? radial.menu.ringStart : "white"
@@ -1037,6 +1309,19 @@ Item {
       color: btn.accentStart
       font.family: radial.menu ? radial.menu.fontFamily : ""
       font.pixelSize: Style.font.bodySmall
+    }
+
+    // A dot under an app that already has a window open.
+    Rectangle {
+      visible: btn.running
+      anchors.horizontalCenter: parent.horizontalCenter
+      y: parent.height - height * 0.3
+      width: Style.space(7)
+      height: width
+      radius: width / 2
+      color: btn.accentStart
+      border.width: 1
+      border.color: radial.menu ? radial.menu.background : "black"
     }
 
     // The focused label may run past its neighbours: a backing keeps it legible.
@@ -1237,26 +1522,28 @@ Item {
         // Above the hub's click area so the page dots get their clicks.
         z: 1
 
-        // The app being moved rides in the hub.
+        // The app being moved rides in the hub, as does the focused app.
         Image {
           anchors.horizontalCenter: parent.horizontalCenter
-          visible: radial.carry !== null
+          visible: radial.carry !== null || radial.hubImage !== ""
           width: radial.hubRadius * 0.8
           height: width
           fillMode: Image.PreserveAspectFit
           sourceSize.width: width * Screen.devicePixelRatio
           sourceSize.height: height * Screen.devicePixelRatio
-          source: radial.carry && radial.menu && radial.menu.appLibrary ? radial.menu.appLibrary.iconSource(radial.carry.row.appIcon) : ""
+          source: radial.carry && radial.menu && radial.menu.appLibrary ? radial.menu.appLibrary.iconSource(radial.carry.row.appIcon) : radial.hubImage
         }
 
         GradientGlyph {
           anchors.horizontalCenter: parent.horizontalCenter
-          visible: radial.carry === null
+          visible: radial.carry === null && radial.hubImage === ""
           width: radial.hubRadius * 1.1
           height: radial.hubRoot ? radial.hubRadius * 1.1 : radial.hubRadius * 0.8
-          // The Omarchy logo on the root ring; the submenu's own icon inside it.
-          glyph: radial.hubRoot ? "" : ((radial.hubEntry && radial.hubEntry.icon) || "")
-          family: radial.hubRoot || !(radial.hubEntry && radial.hubEntry.icon) ? "omarchy" : (radial.menu ? radial.menu.fontFamily : "")
+          // The Omarchy logo on the root ring; the focused button's or the
+          // submenu's own icon inside it.
+          glyph: radial.hubRoot ? "" : (radial.hubGlyph || (radial.hubEntry && radial.hubEntry.icon) || "")
+          family: radial.hubRoot || !(radial.hubGlyph || (radial.hubEntry && radial.hubEntry.icon)) ? "omarchy"
+            : ((radial.hubGlyph && radial.hubFocus.iconFont) || (radial.menu ? radial.menu.fontFamily : ""))
           pixelSize: radial.hubRoot ? Style.font.displayLarge * 1.9 : Style.font.displayLarge * 1.3
         }
 
@@ -1456,7 +1743,7 @@ Item {
         label: cat.modelData.newSlot
           ? (radial.naming ? "“" + radial.naming.text + "▌”" : cat.modelData.label)
           : cat.modelData.label + (cat.hot || radial.searching || !radial.crowded ? " · " + cat.matches : "")
-        hasMenu: radial.ringId === "apps" && cat.modelData.id !== "fav" && cat.modelData.id !== "recent" && !cat.modelData.newSlot
+        hasMenu: radial.ringId === "apps" && !cat.modelData.newSlot
         onEntered: { if (radial.modal) return; radial.focusLevel = 1; radial.catIndex = cat.index }
         onClicked: {
           if (radial.pointerBlocked()) return
@@ -1464,7 +1751,7 @@ Item {
           else radial.openCategory(cat.index)
         }
         onRightClicked: {
-          if (radial.pointerBlocked() || radial.carry) return
+          if (radial.pointerBlocked() || radial.carry || radial.ringId !== "apps") return
           radial.focusLevel = 1
           radial.catIndex = cat.index
           radial.openActions({ kind: "group", group: cat.modelData })
@@ -1497,12 +1784,14 @@ Item {
         // A crowded ring can't fit every name; the focused one always shows.
         showLabel: radial.appLabels
         pinned: app.modelData.kind === "app" && radial.menu.isPinned(app.modelData.appId)
-        hasMenu: app.modelData.kind === "app"
+        running: app.modelData.kind === "app" && radial.windowFor(app.modelData) !== ""
+        hasMenu: app.modelData.kind === "app" || app.modelData.kind === "command"
         onRightClicked: {
           if (radial.pointerBlocked()) return
           radial.focusLevel = 2
           radial.setApp(radial.pageStart + app.index)
-          if (radial.ringId === "apps") radial.openActions({ kind: "app", row: app.modelData })
+          if (app.modelData.kind === "command") radial.openActions({ kind: "command", row: app.modelData })
+          else if (radial.ringId === "apps") radial.openActions({ kind: "app", row: app.modelData })
           else radial.togglePinHot()
         }
         onEntered: { if (radial.modal) return; radial.focusLevel = 2; radial.appIndex = radial.pageStart + app.index }
@@ -1525,8 +1814,8 @@ Item {
         y: scene.height / 2 + Math.sin(act.angle) * act.distance - height / 2
         z: 3
         scale: act.hot ? 0.9 : 0.8
-        accentStart: act.modelData.id === "uninstall" || act.modelData.id === "delete" ? "#e06c75" : (radial.menu ? radial.menu.ringStart : "white")
-        accentEnd: act.modelData.id === "uninstall" || act.modelData.id === "delete" ? "#be5046" : (radial.menu ? radial.menu.ringEnd : "white")
+        accentStart: act.modelData.id === "uninstall" || act.modelData.id === "delete" || act.modelData.id === "cmdRemove" || act.modelData.id === "recentClear" ? "#e06c75" : (radial.menu ? radial.menu.ringStart : "white")
+        accentEnd: act.modelData.id === "uninstall" || act.modelData.id === "delete" || act.modelData.id === "cmdRemove" || act.modelData.id === "recentClear" ? "#be5046" : (radial.menu ? radial.menu.ringEnd : "white")
         hint: radial.hintFor(act.index)
         hot: act.index === radial.actionIndex
         glyph: act.modelData.icon
@@ -1593,6 +1882,13 @@ Item {
       text: radial.statusText
       color: radial.menu ? radial.menu.foreground : "white"
       opacity: 0.8
+      // Click the "… click to undo" line to undo.
+      MouseArea {
+        anchors.fill: parent
+        enabled: radial.undoInfo !== null && !radial.naming && !radial.actionTarget && !radial.carry
+        cursorShape: Qt.PointingHandCursor
+        onClicked: radial.undo()
+      }
       font.family: radial.menu ? radial.menu.fontFamily : ""
       font.pixelSize: Style.font.body
     }
@@ -1600,7 +1896,8 @@ Item {
     Text {
       anchors.horizontalCenter: parent.horizontalCenter
       textFormat: Text.PlainText
-      text: radial.naming ? "Type a name  ·  Enter save  ·  Esc cancel"
+      text: radial.naming ? (radial.naming.mode === "cmdLine" ? "Type or Ctrl+V a shell command  ·  Enter " + (radial.naming.cmdId ? "save" : "next") + "  ·  Esc cancel"
+          : "Type a name  ·  Enter save  ·  Esc cancel")
         : radial.actionTarget ? "← → choose  ·  1–9 pick  ·  Enter do it  ·  Esc close"
         : radial.carry ? "← → choose a group  ·  1–9 drop there  ·  Enter / Ctrl+V drop  ·  Esc cancel"
         : radial.appsOpen
