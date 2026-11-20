@@ -883,7 +883,7 @@ Item {
     var n = radial.naming
     if (k === Qt.Key_Escape) radial.naming = null
     else if (k === Qt.Key_Return || k === Qt.Key_Enter) radial.commitName()
-    else if (k === Qt.Key_V && event.modifiers === Qt.ControlModifier) pasteProc.running = true
+    else if (k === Qt.Key_V && event.modifiers === Qt.ControlModifier) radial.startPaste()
     else if (Util.editsFilter(event, n.text)) radial.setNamingText(Util.editedFilter(event, n.text))
     else if (radial.printable(event)) radial.setNamingText(n.text + event.text)
     return true
@@ -902,13 +902,36 @@ Item {
   }
 
   // Ctrl+V while typing a name or command: one line from the clipboard.
+  // The read is capped at 4 KiB and 2 seconds, so a huge or stalled offer
+  // from another app can't fill the shell's memory or hang the paste. The
+  // editor is stamped with a token (setNamingText copies it along) so a
+  // late result only lands in the editor that asked for it; dismissing or
+  // replacing that editor cancels the read.
+  property int pasteSeq: 0
+
+  function startPaste() {
+    if (!radial.naming || pasteProc.running) return
+    radial.pasteSeq++
+    radial.naming.pasteToken = radial.pasteSeq
+    pasteProc.token = radial.pasteSeq
+    pasteProc.running = true
+  }
+
+  onNamingChanged: {
+    if (pasteProc.running && (!radial.naming || radial.naming.pasteToken !== pasteProc.token))
+      pasteProc.running = false
+  }
+
   Process {
     id: pasteProc
-    command: ["wl-paste", "--no-newline", "--type", "text"]
+    property int token: 0
+    command: ["sh", "-c", "timeout 2 wl-paste --no-newline --type text | head -c 4096"]
     stdout: StdioCollector {
       onStreamFinished: {
+        var n = radial.naming
+        if (!n || n.pasteToken !== pasteProc.token) return
         var line = String(this.text || "").split("\n")[0]
-        if (radial.naming && line) radial.setNamingText(radial.naming.text + line)
+        if (line) radial.setNamingText(n.text + line)
       }
     }
   }
