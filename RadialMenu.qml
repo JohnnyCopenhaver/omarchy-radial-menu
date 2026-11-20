@@ -77,7 +77,7 @@ Item {
       ["Enter  click", "Open or run"],
       ["1–9  0", "Pick a numbered item"],
       ["Home  End", "First / last item"],
-      ["PgUp  PgDn  dots", "Turn pages"],
+      ["PgUp  PgDn  dots", "Turn pages (10 per ring)"],
       ["Esc  Backspace", "Go back"],
       ["Right-click disc", "Go back"],
       ["Click the hub", "Back out / close"],

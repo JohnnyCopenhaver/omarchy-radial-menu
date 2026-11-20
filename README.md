@@ -11,6 +11,7 @@ instead of in a list, and the two menus too big for one ring, **Apps** and
 
 - Every Omarchy menu and submenu is shown as a ring. Small menus show all their items at once.
 - **Apps** groups your installed apps by freedesktop category, gathers AI apps (Claude, ChatGPT, Perplexity, Ollama…) into an AI group by name, and puts web apps in their own group.
+- **Pages**: a ring shows up to 10 items at a time. A group with more (Office often has more) gets page dots in the hub; press `PgDn` or click a dot to see the rest. An app that seems to be missing from its group is usually on the next page.
 - **Install** uses the same rings: Style, Development, Editor, AI, Gaming and the rest, plus a Packages group.
 - **Favourites**: pin any app with `Ctrl+P` or from its right-click options. Pins come first in Apps and get a ★; rearrange them with `Ctrl+←`/`Ctrl+→`.
 - **Switch, don't relaunch**: apps with a window open get a dot; picking one brings its window forward (`Shift+Enter` starts another copy).
@@ -68,7 +69,7 @@ rm -f ~/.local/state/omarchy/radial-menu-*.json
 | `Enter` / click | Open or run |
 | `1`–`9`, `0` | Pick the numbered item |
 | `Home` / `End` | First / last item |
-| `PgUp` / `PgDn` / dots in the hub | Change page on long rings |
+| `PgUp` / `PgDn` / dots in the hub | Change page: rings show 10 items per page, and groups with more have dots in the hub |
 | `Backspace` / right-click the disc / click the hub | Go back |
 | `Ctrl+P` | Pin or unpin a favourite |
 | `Ctrl+←` / `Ctrl+→` | Move a favourite earlier or later |
